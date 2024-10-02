@@ -1,7 +1,8 @@
 open Netlist_ast
 
+let number_steps = ref (-1)
 let print_only = ref false
-    let rom = [||]
+let rom = [||]
 
 let l_op op = function
     VBit b, VBit b' -> VBit (op b b')
@@ -13,17 +14,17 @@ let array_to_int n a =
   Array.mapi (fun i b -> (1 lsl (n - 1 - i)) * (if b then 1 else 0)) a |>
   Array.fold_left (+) 0
 
-let build_ram p =
+let build_ram =
   let add_var env (x, e) = match e with
       Eram (ads, ws, _, _, _, _) ->
       Env.add x (Array.init (1 lsl ads)
-                   (fun _ -> VBitArray (Array.make ws false)))
+                   (fun _ -> Array.make ws false))
         env
     | _ -> env
   in List.fold_left add_var Env.empty
 
 let simulator program number_steps =
-  let ram = build_ram program in
+  let ram = build_ram program.p_eqs in
   let reg = Hashtbl.create 4096 in
   let load_arg = function
       Avar i -> Hashtbl.find reg i
@@ -37,21 +38,20 @@ let simulator program number_steps =
       VBit _ -> failwith "size mismatch"
     | VBitArray a -> a
   in
-  let exec (x, e) = match e with
+  let calc (x, e) = match e with
       Earg a ->
-      Hashtbl.replace reg x (load_arg a)
-    | Ereg y -> Hashtbl.replace reg y (Hashtbl.find reg y)
+       load_arg a
+    | Ereg y -> Hashtbl.find reg y
     | Enot a -> begin
-        let v = match load_arg a with
+        match load_arg a with
             VBit b -> VBit (not b)
           | VBitArray a ->
             VBitArray (Array.map (not) a)
-        in Hashtbl.replace reg x v
       end
     | Ebinop (o, a, a') -> begin
         let v = load_arg a in
         let v' = load_arg a' in
-        Hashtbl.replace reg x @@ match o with
+        match o with
           Or -> l_op (||) (v, v')
         | Xor -> l_op (<>) (v, v')
         | And -> l_op (&&) (v, v')
@@ -59,33 +59,42 @@ let simulator program number_steps =
       end
     | Emux (c, t, f) ->
       if load_arg c = VBit true then
-        Hashtbl.replace reg x @@ load_arg t
+        load_arg t
       else
-        Hashtbl.replace reg x @@ load_arg f
+        load_arg f
     | Erom (ss, ws, ad) ->
       let ad = array_to_int ss (load_arr ss ad) in
-      Hashtbl.replace reg x @@ (VBitArray (Array.sub rom ad ws))
+      VBitArray (Array.sub rom ad ws)
     | Eram (ss, ws, rad, wen, wad, wa) ->
       let ad = array_to_int ss (load_arr ss rad) in
-      Hashtbl.replace reg x @@ (VBitArray (Array.sub rom ad ws));
-      if load_arg wen = VBit true then
+      let lram = Env.find x ram in
+      let v = VBitArray (Array.copy lram.(ad)) in
+      Hashtbl.replace reg x v;
+      (if load_arg wen = VBit true then
         let ad = array_to_int ss (load_arr ss wad) in
         let da = load_arr ws rad in
-        for i = 0 to ws - 1 do
-          ram.(ad + i) <- da.(i)
-        done
+        Array.blit da 0 lram.(ad) 0 ws); 
+      v
     | Econcat (a, a') ->
       let a = load_arrno a in
       let a' = load_arrno a' in
-      Hashtbl.replace reg x @@ VBitArray (Array.concat [a; a'])
+      VBitArray (Array.concat [a; a'])
     | Eslice (i, j, a) ->
       let a = load_arrno a in
-      Hashtbl.replace reg x @@ VBitArray (Array.sub a i (j - i + 1))
+      VBitArray (Array.sub a i (j - i + 1))
     | Eselect (i, a) ->
       match load_arg a with
-        VBitArray a -> Hashtbl.replace reg x @@ VBit a.(i)
-      | _ -> failwith "error"
+        VBitArray a -> VBit a.(i)
+      | _ -> failwith "called select on a bit instead of a bus"
   in
+  (* x =RAM(...) is treated aside because calculating the value x should have,
+     is not the last thing it does (it can also write) *)
+  let exec (x, e) =
+    match e with
+      Eram (_, _, _, _, _, _) -> let _ = calc (x, e) in ()
+    | _ -> Hashtbl.replace reg x (calc (x, e))
+  in
+
   for i = 1 to number_steps do
     Printf.printf "cycle : %d\n" i;
     let print_type = function
