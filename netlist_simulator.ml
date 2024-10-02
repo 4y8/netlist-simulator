@@ -23,6 +23,38 @@ let build_ram =
     | _ -> env
   in List.fold_left add_var Env.empty
 
+let print_type = function
+    TBit -> ""
+  | TBitArray n -> Printf.sprintf " : %d" n
+
+let read_input x ty =
+  Printf.printf "%s%s ? " x (print_type ty);
+  let s = read_line () in
+  match ty with
+    TBit ->
+    if String.length s <> 1 then
+      failwith
+        (Printf.sprintf "size mismatch: expected a bit (size 1), got %s" s)
+    else if s <> "0" && s <> "1" then
+      failwith
+        (Printf.sprintf "wrong format: expected 0 or 1, got %s" s)
+    else
+      (VBit (s = "1"))
+  | TBitArray n ->
+    if String.length s <> n then
+      failwith @@
+      Printf.sprintf "size mismatch: expected a bus of size %d, got %s" n s
+    else
+      let a = Array.make n false in
+      let treat_char i c =
+        if c <> '0' && c <> '1' then
+          failwith @@
+          (Printf.sprintf "wrong format: expected 0 or 1, got %c" c)
+        else a.(i) <- c = '1'
+      in
+      String.iteri treat_char s;
+      VBitArray a
+
 let simulator program number_steps =
   let ram = build_ram program.p_eqs in
   let reg = Hashtbl.create 4096 in
@@ -40,13 +72,13 @@ let simulator program number_steps =
   in
   let calc (x, e) = match e with
       Earg a ->
-       load_arg a
+      load_arg a
     | Ereg y -> Hashtbl.find reg y
     | Enot a -> begin
         match load_arg a with
-            VBit b -> VBit (not b)
-          | VBitArray a ->
-            VBitArray (Array.map (not) a)
+          VBit b -> VBit (not b)
+        | VBitArray a ->
+          VBitArray (Array.map (not) a)
       end
     | Ebinop (o, a, a') -> begin
         let v = load_arg a in
@@ -71,9 +103,9 @@ let simulator program number_steps =
       let v = VBitArray (Array.copy lram.(ad)) in
       Hashtbl.replace reg x v;
       (if load_arg wen = VBit true then
-        let ad = array_to_int ss (load_arr ss wad) in
-        let da = load_arr ws rad in
-        Array.blit da 0 lram.(ad) 0 ws); 
+         let ad = array_to_int ss (load_arr ss wad) in
+         let da = load_arr ws rad in
+         Array.blit da 0 lram.(ad) 0 ws); 
       v
     | Econcat (a, a') ->
       let a = load_arrno a in
@@ -97,24 +129,17 @@ let simulator program number_steps =
 
   for i = 1 to number_steps do
     Printf.printf "cycle : %d\n" i;
-    let print_type = function
-        TBit -> ""
-      | TBitArray n -> Printf.sprintf " : %d" n
-    in
     let read_input x =
-      let ty = Env.find x program.p_vars in
-      Printf.printf "%s%s ? " x (print_type ty);
-      let n = read_int () in
-      match Env.find x program.p_vars with
-        TBit -> Hashtbl.replace reg x (VBit (n = 1))
-      | TBitArray s ->
-        Hashtbl.replace reg x (VBitArray (Array.init s (fun i -> (n lsr (s - i - 1)) land 1 = 1)))
+      Hashtbl.replace reg x @@ read_input x (Env.find x program.p_vars)
     in
     let out x =
       Printf.printf "%s : " x;
       match Hashtbl.find reg x with
-        VBit b -> if b then print_endline "1" else print_endline "0"
-      | VBitArray a -> Array.iter (fun b -> if b then print_int 1 else print_int 0) a;print_newline ()
+        VBit b ->
+        if b then print_endline "1" else print_endline "0"
+      | VBitArray a ->
+        Array.iter (fun b -> if b then print_int 1 else print_int 0) a;
+        print_newline ()
     in
     List.iter read_input program.p_inputs;
     List.iter exec program.p_eqs;
