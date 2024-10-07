@@ -43,17 +43,9 @@ let rec dfs g s =
   end else
     false
 
-let rec erase =
-  let rec dfs g s =
-    if s.n_mark = Visited then begin
-      s.n_mark <- NotVisited;
-      List.iter (dfs g) (s.n_link_to)
-    end
-  in dfs
-
 let has_cycle g = 
   let b = List.fold_left (||) false (List.map (dfs g) g.g_nodes) in
-  List.iter (erase g) (g.g_nodes);
+  clear_marks g;
   b
 
 let topological g =
@@ -66,4 +58,4 @@ let topological g =
       s.n_mark <- Visited
     end
     else if s.n_mark = InProgress then raise Cycle
-  in List.iter (tri g) g.g_nodes; List.iter (erase g) g.g_nodes; !t
+  in List.iter (tri g) g.g_nodes; clear_marks g; List.rev !t

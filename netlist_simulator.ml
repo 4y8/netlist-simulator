@@ -7,8 +7,14 @@ let rom = [||]
 let l_op op = function
     VBit b, VBit b' -> VBit (op b b')
   | VBitArray a, VBitArray a' ->
-    VBitArray (Array.map2 op a a')
-  | _, _ -> failwith "erreur de type"
+    begin
+      try 
+        VBitArray (Array.map2 op a a')
+      with
+        Invalid_argument _ -> failwith "size mismatch: mixed bus sizes with \
+                                      logical operations"
+    end
+  | _, _ -> failwith "type mismatch: mixed bus and bits with logical operations"
 
 let array_to_int n a =
   Array.mapi (fun i b -> (1 lsl (n - 1 - i)) * (if b then 1 else 0)) a |>

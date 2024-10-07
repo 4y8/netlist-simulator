@@ -5,7 +5,9 @@ exception Combinational_cycle
 
 let free_var_arg = function Avar s -> [s] | Aconst _ -> []
 
-let free_var = function
+(** [nec_var e] returns the list of nodes on which the output of the
+    expression [e] depends*)
+let nec_var = function
     Earg a -> free_var_arg a
   | Ereg _ -> []
   | Enot a -> free_var_arg a
@@ -20,8 +22,9 @@ let free_var = function
   | Eselect (_, a) -> free_var_arg a
 
 let read_exp (x, e) =
-  x :: free_var e
+  x :: nec_var e
 
+(** [build_graph p] returns the graph of dependencies of [p] *)
 let build_graph p =
   let l = p.p_eqs in
   let g = mk_graph () in
@@ -29,23 +32,20 @@ let build_graph p =
   List.iter (add_node g) p.p_inputs;
   List.iter (add_node g) p.p_outputs;
   let add (x, e) =
-    List.iter (add_edge g x) (free_var e)
+    List.iter (add_edge g x) (nec_var e)
   in
   List.iter add l;
   g
 
-let rec map_opt f = function
-    [] -> []
-  | hd :: tl -> match f hd with None -> map_opt f tl
-                              | Some x -> x :: map_opt f tl
-
 let schedule p =
   let g = build_graph p in
   try
-    let l = List.rev @@ topological g in
-    { p_eqs = map_opt (fun v -> match List.assoc_opt v p.p_eqs with
-            None -> None
-          | Some e -> Some (v, e)) l ; p_inputs = p.p_inputs ; p_outputs = p.p_outputs ;
-      p_vars = p.p_vars }
+    let l = topological g in
+    let get_def v =
+      match List.assoc_opt v p.p_eqs with
+        None -> None
+      | Some e -> Some (v, e)
+    in
+    { p with p_eqs = Utils.map_opt get_def l }
   with
-  Cycle -> raise Combinational_cycle
+    Cycle -> raise Combinational_cycle
