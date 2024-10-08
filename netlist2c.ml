@@ -57,7 +57,7 @@ let compile f =
       Printf.(fprintf fd "%s=" x; load a; fprintf fd "^"; load a'; fprintf fd ";")
     | Ebinop (Nand, a, a') ->
       Printf.(fprintf fd "%s=~(" x; load a; fprintf fd "&"; load a'; fprintf fd ");")
-    | Emux (c, t, f) ->
+    | Emux (c, f, t) ->
       Printf.(fprintf fd "%s=(" x; load c; fprintf fd ") ?(";
               load t; fprintf fd ") : ("; load f; fprintf fd ");")
     | Erom (_, _, a) ->

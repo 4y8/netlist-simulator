@@ -116,7 +116,7 @@ let simulator program number_steps =
       let v = load_arg a in
       let v' = load_arg a' in
       l_op (fun_of_op o) (v, v')
-    | Emux (c, t, f) ->
+    | Emux (c, f, t) ->
       let v = load_arg c in
       if v = VBit true then
         load_arg t
@@ -130,7 +130,7 @@ let simulator program number_steps =
     | Eram (ss, ws, rad, wen, wad, wda) ->
       let ad = load_adr ss rad in
       let lram = Env.find x ram in
-      let v = VBitArray (Array.copy lram.(ad)) in
+      let v = if ws = 1 then VBit lram.(ad).(0) else VBitArray (Array.copy lram.(ad)) in
       Hashtbl.replace reg x v;
       (if load_arg wen = VBit true then
          let ad = load_adr ss wad in
@@ -154,7 +154,8 @@ let simulator program number_steps =
   in
 
   let exec (x, e) =
-    Hashtbl.replace reg x (calc (x, e)) in
+    Hashtbl.replace reg x (calc (x, e));
+  in
 
   for i = 1 to number_steps do
     Printf.printf "cycle : %d\n" i;
