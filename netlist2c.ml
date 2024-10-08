@@ -1,11 +1,17 @@
 open Netlist_ast
 
+let read_rom = ref ""
+
 let build_mem fd p =
   let treat (x, e) = match e with
       Eram (ads, ws, _, _, _ ,_) ->
       Printf.fprintf fd "uint64_t ram_%s[%d];" x (1 lsl ads)
     | Erom (ads, ws, _) ->
-      Printf.fprintf fd "uint64_t rom_%s[%d];" x (1 lsl ads)
+      Printf.fprintf fd "uint64_t rom_%s[%d];" x (1 lsl ads);
+      read_rom :=
+        !read_rom ^ Printf.sprintf
+          "f = fopen(\"rom/%s\", \"r\"); for (int j; (c = getc(fd)) != EOF; ++j)
+rom_%s[i/%d] |= (c == '1') << (%d - (i %% %d) - 1); fclose(fd);" x x ws ws ws
     | _ -> Printf.fprintf fd "uint64_t %s;" x
   in
   List.iter treat p
@@ -18,7 +24,7 @@ let compile f =
   build_mem fd p.p_eqs;
   List.iter (Printf.fprintf fd "uint64_t %s;") p.p_inputs;
   Printf.fprintf fd
-    "int main(){char buf[100]; for (int i = 0; 1; ++i){printf(\"cycle : %%d\\n\", i);";
+    "int main(){char buf[100]; FILE *f; int c; %s for (int i = 0; 1; ++i){printf(\"cycle : %%d\\n\", i);" !read_rom;
   let read_input x =
     Printf.fprintf fd "printf(\"%s? \");fgets(buf, 100, stdin);%s=strtoul(buf, NULL, 2);" x x
   in
