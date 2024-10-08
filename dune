@@ -1,5 +1,5 @@
 (executables
- (names graph_test scheduler_test netlist_simulator)
+ (names graph_test scheduler_test netlist_simulator netlist2c)
  (libraries unix)
  (modes byte exe)
  (flags ()))
