@@ -2,7 +2,7 @@ open Netlist_ast
 
 let number_steps = ref max_int
 let print_only = ref false
-let rom_file = ref "rom"
+let rom_dir = ref "rom"
 
 (** [l_op op v1 v2] computes the result of [op] on [v1] and [v2]. *)
 let l_op op = function
@@ -23,28 +23,38 @@ let fun_of_op = function
   | Xor -> (<>)
   | Nand -> fun b1 b2 -> not (b1 && b2)
 
-(** [array_to_int n a] converts the array [a] of [n] bits to an integer in
+(** [int_of_array n a] converts the array [a] of [n] bits to an integer in
     big-endian. *)
-let array_to_int n a =
+let int_of_array n a =
   Array.mapi (fun i b -> (1 lsl (n - 1 - i)) * (if b then 1 else 0)) a |>
   Array.fold_left (+) 0
-
-(** [build_ram p] builds a map which associates to each x =RAM(...), an array of
-    the right size. *)
-let build_ram =
-  let add_var env (x, e) = match e with
-      Eram (ads, ws, _, _, _, _) ->
-      Env.add x (Array.init (1 lsl ads)
-                   (fun _ -> Array.make ws false))
-        env
-    | _ -> env
-  in List.fold_left add_var Env.empty
 
 let bool_of_char = function
     '0' -> false
   | '1' -> true
   | c ->
     failwith @@ Printf.sprintf "wrong format: expected 0 or 1, got %c" c
+
+(** [build_mem p] builds and initializes maps for RAM and ROM of the equations
+    [p]. *)
+let build_mem =
+  let add_var (ram, rom) (x, e) = match e with
+      Eram (ads, ws, _, _, _, _) ->
+      Env.add x (Array.init (1 lsl ads)
+                   (fun _ -> Array.make ws false))
+        ram, rom
+    | Erom (ads, ws, _) ->
+      let fd = open_in (!rom_dir ^ "/" ^ x) in
+      let s = input_line fd in
+      let a = Array.init (1 lsl ads) (fun _ -> Array.make ws false) in
+      if 1 lsl ads < String.length s then
+        failwith "wrong format: rom file for %s is too big";
+      for i = 0 to String.length s - 1 do
+        a.(i / ws).(i mod ws) <- bool_of_char s.[i]
+      done;
+      close_in fd; ram, Env.add x a rom
+    | _ -> rom, ram
+  in List.fold_left add_var (Env.empty, Env.empty)
 
 (** [read_input x ty] reads the value of the input [x] of type [ty]. *)
 let read_input x ty =
@@ -69,13 +79,8 @@ let read_input x ty =
       VBitArray (Array.init n (fun i -> bool_of_char s.[i]))
 
 let simulator program number_steps =
-  let ram = build_ram program.p_eqs in
+  let ram, rom = build_mem program.p_eqs in
   let reg = Hashtbl.create 4096 in
-
-  let fd = open_in !rom_file in
-  let s = input_line fd in
-  let rom = Array.init (String.length s) (fun i -> bool_of_char s.[i]) in
-  close_in fd;
 
   let load_arg = function
       Avar i -> Hashtbl.find reg i
@@ -119,15 +124,15 @@ let simulator program number_steps =
       else
         failwith "type mismatch: used a multiplexer on a bus, expected a bit"
     | Erom (ss, ws, ad) ->
-      let ad = array_to_int ss (load_arr ss ad) in
-      VBitArray (Array.sub rom ad ws)
+      let ad = int_of_array ss (load_arr ss ad) in
+      VBitArray (Env.find x rom).(ad)
     | Eram (ss, ws, rad, wen, wad, wa) ->
-      let ad = array_to_int ss (load_arr ss rad) in
+      let ad = int_of_array ss (load_arr ss rad) in
       let lram = Env.find x ram in
       let v = VBitArray (Array.copy lram.(ad)) in
       Hashtbl.replace reg x v;
       (if load_arg wen = VBit true then
-         let ad = array_to_int ss (load_arr ss wad) in
+         let ad = int_of_array ss (load_arr ss wad) in
          let da = load_arr ws rad in
          Array.blit da 0 lram.(ad) 0 ws); 
       v
@@ -143,13 +148,8 @@ let simulator program number_steps =
         VBitArray a -> VBit a.(i)
       | _ -> failwith "type mismatch: called select on a bit instead of a bus"
   in
-  (* x =RAM(...) is treated aside because calculating the value x should have,
-     is not the last thing it does (it can also write) *)
-  let exec (x, e) =
-    match e with
-      Eram (_, _, _, _, _, _) -> let _ = calc (x, e) in ()
-    | _ -> Hashtbl.replace reg x (calc (x, e))
-  in
+
+  let exec (x, e) = Hashtbl.replace reg x (calc (x, e)) in
 
   for i = 1 to number_steps do
     Printf.printf "cycle : %d\n" i;
@@ -186,7 +186,7 @@ let compile filename =
 let main () =
   Arg.parse
     [ "-n", Arg.Set_int number_steps, "Number of steps to simulate"
-    ; "-r", Arg.Set_string rom_file, "Name of the rom file"]
+    ; "-r", Arg.Set_string rom_dir, "Name of the rom directory"]
     compile
     ""
 ;;
