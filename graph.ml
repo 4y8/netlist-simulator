@@ -13,8 +13,9 @@ and 'a node = {
 let mk_graph () = { g_nodes = [] }
 
 let add_node g x =
-  let n = { n_label = x; n_mark = NotVisited; n_link_to = []; n_linked_by = [] } in
-  g.g_nodes <- n :: g.g_nodes
+  if not (List.exists (fun n -> n.n_label = x) g.g_nodes) then
+    let n = { n_label = x; n_mark = NotVisited; n_link_to = []; n_linked_by = [] } in
+    g.g_nodes <- n :: g.g_nodes
 
 let node_of_label g x =
   List.find (fun n -> n.n_label = x) g.g_nodes

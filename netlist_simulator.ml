@@ -37,7 +37,7 @@ let bool_of_char = function
 
 (** [build_mem p] builds and initializes maps for RAM and ROM of the equations
     [p]. *)
-let build_mem =
+let build_mem reg =
   let add_var (ram, rom) (x, e) = match e with
       Eram (ads, ws, _, _, _, _) ->
       Env.add x (Array.init (1 lsl ads)
@@ -47,7 +47,7 @@ let build_mem =
       let fd = open_in (!rom_dir ^ "/" ^ x) in
       let s = input_line fd in
       let a = Array.init (1 lsl ads) (fun _ -> Array.make ws false) in
-      if 1 lsl ads < String.length s then
+      if (1 lsl ads) * ws < String.length s then
         failwith "wrong format: rom file for %s is too big";
       for i = 0 to String.length s - 1 do
         a.(i / ws).(i mod ws) <- bool_of_char s.[i]
@@ -79,26 +79,27 @@ let read_input x ty =
       VBitArray (Array.init n (fun i -> bool_of_char s.[i]))
 
 let simulator program number_steps =
-  let ram, rom = build_mem program.p_eqs in
   let reg = Hashtbl.create 4096 in
+  let ram, rom = build_mem reg program.p_eqs in
+  let dum v = match Env.find v program.p_vars with
+      TBit -> VBit false
+    | TBitArray n -> VBitArray (Array.make n false)
+  in
+  List.iter (fun v -> Hashtbl.add reg v (dum v)) program.p_inputs;
+  List.iter (fun v -> Hashtbl.add reg v (dum v)) program.p_outputs;
+  List.iter (fun (v, _) -> Hashtbl.add reg v (dum v)) program.p_eqs;
 
   let load_arg = function
       Avar i -> Hashtbl.find reg i
     | Aconst v -> v
   in
-  let load_arr n a = match load_arg a with
-      VBit _ -> failwith "size mismatch: expected a bus, got a bit"
-    | VBitArray a ->
-      if Array.length a = n then
-        a
-      else failwith @@
-        Printf.sprintf
-          "size mismatch: expected a bus of size %d, got one of size %d"
-          n (Array.length a)
-  in
   let load_arrno a = match load_arg a with
       VBit _ -> failwith "size mismatch: expected a bus, got a bit"
     | VBitArray a -> a
+  in
+  let load_adr n a = match load_arg a with
+      VBit b -> if b then 1 else 0
+    | VBitArray a -> int_of_array n a
   in
 
   let calc (x, e) = match e with
@@ -124,17 +125,20 @@ let simulator program number_steps =
       else
         failwith "type mismatch: used a multiplexer on a bus, expected a bit"
     | Erom (ss, ws, ad) ->
-      let ad = int_of_array ss (load_arr ss ad) in
+      let ad = load_adr ss ad in
       VBitArray (Env.find x rom).(ad)
-    | Eram (ss, ws, rad, wen, wad, wa) ->
-      let ad = int_of_array ss (load_arr ss rad) in
+    | Eram (ss, ws, rad, wen, wad, wda) ->
+      let ad = load_adr ss rad in
       let lram = Env.find x ram in
       let v = VBitArray (Array.copy lram.(ad)) in
       Hashtbl.replace reg x v;
       (if load_arg wen = VBit true then
-         let ad = int_of_array ss (load_arr ss wad) in
-         let da = load_arr ws rad in
-         Array.blit da 0 lram.(ad) 0 ws); 
+         let ad = load_adr ss wad in
+         match load_arg wda with
+           VBit b when ws = 1 -> lram.(ad).(0) <- b
+         | VBitArray a when Array.length a = ws ->
+           Array.blit a 0 lram.(ad) 0 ws
+         | _ -> failwith "type mismatch: tried to write RAM with wrong size"); 
       v
     | Econcat (a, a') ->
       let a = load_arrno a in
@@ -149,7 +153,8 @@ let simulator program number_steps =
       | _ -> failwith "type mismatch: called select on a bit instead of a bus"
   in
 
-  let exec (x, e) = Hashtbl.replace reg x (calc (x, e)) in
+  let exec (x, e) =
+    Hashtbl.replace reg x (calc (x, e)) in
 
   for i = 1 to number_steps do
     Printf.printf "cycle : %d\n" i;
@@ -166,8 +171,10 @@ let simulator program number_steps =
         print_newline ()
     in
     List.iter read_input program.p_inputs;
+
     List.iter exec program.p_eqs;
-    List.iter out program.p_outputs
+    List.iter out program.p_outputs;
+    Unix.sleepf 0.5
   done
 
 let compile filename =
