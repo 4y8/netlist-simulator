@@ -1,9 +1,10 @@
 open Netlist_ast
 
-let number_steps = ref (-1)
+let number_steps = ref max_int
 let print_only = ref false
-let rom = [||]
+let rom_file = ref "rom"
 
+(** [l_op op v1 v2] computes the result of [op] on [v1] and [v2]. *)
 let l_op op = function
     VBit b, VBit b' -> VBit (op b b')
   | VBitArray a, VBitArray a' ->
@@ -16,10 +17,20 @@ let l_op op = function
     end
   | _, _ -> failwith "type mismatch: mixed bus and bits with logical operations"
 
+let fun_of_op = function
+    Or -> (||)
+  | And -> (&&)
+  | Xor -> (<>)
+  | Nand -> fun b1 b2 -> not (b1 && b2)
+
+(** [array_to_int n a] converts the array [a] of [n] bits to an integer in
+    big-endian. *)
 let array_to_int n a =
   Array.mapi (fun i b -> (1 lsl (n - 1 - i)) * (if b then 1 else 0)) a |>
   Array.fold_left (+) 0
 
+(** [build_ram p] builds a map which associates to each x =RAM(...), an array of
+    the right size. *)
 let build_ram =
   let add_var env (x, e) = match e with
       Eram (ads, ws, _, _, _, _) ->
@@ -29,53 +40,62 @@ let build_ram =
     | _ -> env
   in List.fold_left add_var Env.empty
 
-let print_type = function
+let bool_of_char = function
+    '0' -> false
+  | '1' -> true
+  | c ->
+    failwith @@ Printf.sprintf "wrong format: expected 0 or 1, got %c" c
+
+(** [read_input x ty] reads the value of the input [x] of type [ty]. *)
+let read_input x ty =
+  let print_type = function
     TBit -> ""
   | TBitArray n -> Printf.sprintf " : %d" n
-
-let read_input x ty =
+  in
   Printf.printf "%s%s ? " x (print_type ty);
   let s = read_line () in
   match ty with
     TBit ->
     if String.length s <> 1 then
-      failwith
-        (Printf.sprintf "size mismatch: expected a bit (size 1), got %s" s)
-    else if s <> "0" && s <> "1" then
-      failwith
-        (Printf.sprintf "wrong format: expected 0 or 1, got %s" s)
+      failwith @@
+      Printf.sprintf "size mismatch: expected a bit (size 1), got %s" s
     else
-      (VBit (s = "1"))
+      VBit (bool_of_char s.[0])
   | TBitArray n ->
     if String.length s <> n then
       failwith @@
       Printf.sprintf "size mismatch: expected a bus of size %d, got %s" n s
     else
-      let a = Array.make n false in
-      let treat_char i c =
-        if c <> '0' && c <> '1' then
-          failwith @@
-          (Printf.sprintf "wrong format: expected 0 or 1, got %c" c)
-        else a.(i) <- c = '1'
-      in
-      String.iteri treat_char s;
-      VBitArray a
+      VBitArray (Array.init n (fun i -> bool_of_char s.[i]))
 
 let simulator program number_steps =
   let ram = build_ram program.p_eqs in
   let reg = Hashtbl.create 4096 in
+
+  let fd = open_in !rom_file in
+  let s = input_line fd in
+  let rom = Array.init (String.length s) (fun i -> bool_of_char s.[i]) in
+  close_in fd;
+
   let load_arg = function
       Avar i -> Hashtbl.find reg i
     | Aconst v -> v
   in
   let load_arr n a = match load_arg a with
-      VBit _ -> failwith "size mismatch"
-    | VBitArray a -> assert (Array.length a = n); a
+      VBit _ -> failwith "size mismatch: expected a bus, got a bit"
+    | VBitArray a ->
+      if Array.length a = n then
+        a
+      else failwith @@
+        Printf.sprintf
+          "size mismatch: expected a bus of size %d, got one of size %d"
+          n (Array.length a)
   in
   let load_arrno a = match load_arg a with
-      VBit _ -> failwith "size mismatch"
+      VBit _ -> failwith "size mismatch: expected a bus, got a bit"
     | VBitArray a -> a
   in
+
   let calc (x, e) = match e with
       Earg a ->
       load_arg a
@@ -86,20 +106,18 @@ let simulator program number_steps =
         | VBitArray a ->
           VBitArray (Array.map (not) a)
       end
-    | Ebinop (o, a, a') -> begin
-        let v = load_arg a in
-        let v' = load_arg a' in
-        match o with
-          Or -> l_op (||) (v, v')
-        | Xor -> l_op (<>) (v, v')
-        | And -> l_op (&&) (v, v')
-        | Nand -> l_op (fun b b' -> not (b && b')) (v, v')
-      end
+    | Ebinop (o, a, a') ->
+      let v = load_arg a in
+      let v' = load_arg a' in
+      l_op (fun_of_op o) (v, v')
     | Emux (c, t, f) ->
-      if load_arg c = VBit true then
+      let v = load_arg c in
+      if v = VBit true then
         load_arg t
-      else
+      else if v = VBit false then
         load_arg f
+      else
+        failwith "type mismatch: used a multiplexer on a bus, expected a bit"
     | Erom (ss, ws, ad) ->
       let ad = array_to_int ss (load_arr ss ad) in
       VBitArray (Array.sub rom ad ws)
@@ -123,7 +141,7 @@ let simulator program number_steps =
     | Eselect (i, a) ->
       match load_arg a with
         VBitArray a -> VBit a.(i)
-      | _ -> failwith "called select on a bit instead of a bus"
+      | _ -> failwith "type mismatch: called select on a bit instead of a bus"
   in
   (* x =RAM(...) is treated aside because calculating the value x should have,
      is not the last thing it does (it can also write) *)
@@ -167,7 +185,8 @@ let compile filename =
 
 let main () =
   Arg.parse
-    ["-n", Arg.Set_int number_steps, "Number of steps to simulate"]
+    [ "-n", Arg.Set_int number_steps, "Number of steps to simulate"
+    ; "-r", Arg.Set_string rom_file, "Name of the rom file"]
     compile
     ""
 ;;
