@@ -38,11 +38,11 @@ let bool_of_char = function
 (** [build_mem p] builds and initializes maps for RAM and ROM of the equations
     [p]. *)
 let build_mem reg =
-  let add_var (ram, rom) (x, e) = match e with
+  let add_var (ram, rom, l) (x, e) = match e with
       Eram (ads, ws, _, _, _, _) ->
       Env.add x (Array.init (1 lsl ads)
                    (fun _ -> Array.make ws false))
-        ram, rom
+        ram, rom, l
     | Erom (ads, ws, _) ->
       let fd = open_in (!rom_dir ^ "/" ^ x) in
       let s = input_line fd in
@@ -52,9 +52,10 @@ let build_mem reg =
       for i = 0 to String.length s - 1 do
         a.(i / ws).(i mod ws) <- bool_of_char s.[i]
       done;
-      close_in fd; ram, Env.add x a rom
-    | _ -> rom, ram
-  in List.fold_left add_var (Env.empty, Env.empty)
+      close_in fd; ram, Env.add x a rom, l
+    | Ereg y -> ram, rom, (x, y) :: l
+    | _ -> ram, rom, l
+  in List.fold_left add_var (Env.empty, Env.empty, [])
 
 (** [read_input x ty] reads the value of the input [x] of type [ty]. *)
 let read_input x ty =
@@ -80,7 +81,7 @@ let read_input x ty =
 
 let simulator program number_steps =
   let reg = Hashtbl.create 4096 in
-  let ram, rom = build_mem reg program.p_eqs in
+  let ram, rom, wreg = build_mem reg program.p_eqs in
   let dum v = match Env.find v program.p_vars with
       TBit -> VBit false
     | TBitArray n -> VBitArray (Array.make n false)
@@ -88,6 +89,7 @@ let simulator program number_steps =
   List.iter (fun v -> Hashtbl.add reg v (dum v)) program.p_inputs;
   List.iter (fun v -> Hashtbl.add reg v (dum v)) program.p_outputs;
   List.iter (fun (v, _) -> Hashtbl.add reg v (dum v)) program.p_eqs;
+  let wram = ref [] in
 
   let load_arg = function
       Avar i -> Hashtbl.find reg i
@@ -105,7 +107,8 @@ let simulator program number_steps =
   let calc (x, e) = match e with
       Earg a ->
       load_arg a
-    | Ereg y -> Hashtbl.find reg y
+    | Ereg y ->
+      Hashtbl.find reg x
     | Enot a -> begin
         match load_arg a with
           VBit b -> VBit (not b)
@@ -128,17 +131,18 @@ let simulator program number_steps =
       let ad = load_adr ss ad in
       VBitArray (Env.find x rom).(ad)
     | Eram (ss, ws, rad, wen, wad, wda) ->
-      let ad = load_adr ss rad in
       let lram = Env.find x ram in
-      let v = if ws = 1 then VBit lram.(ad).(0) else VBitArray (Array.copy lram.(ad)) in
+      let ad = load_adr ss rad in
+      let v =
+        if ws = 1
+        then VBit lram.(ad).(0)
+        else VBitArray (Array.copy lram.(ad))
+      in
       Hashtbl.replace reg x v;
       (if load_arg wen = VBit true then
          let ad = load_adr ss wad in
-         match load_arg wda with
-           VBit b when ws = 1 -> lram.(ad).(0) <- b
-         | VBitArray a when Array.length a = ws ->
-           Array.blit a 0 lram.(ad) 0 ws
-         | _ -> failwith "type mismatch: tried to write RAM with wrong size"); 
+         wram := (lram.(ad), wda, ws) :: !wram
+      );
       v
     | Econcat (a, a') ->
       let a = load_arrno a in
@@ -172,9 +176,15 @@ let simulator program number_steps =
         print_newline ()
     in
     List.iter read_input program.p_inputs;
-
     List.iter exec program.p_eqs;
     List.iter out program.p_outputs;
+    List.iter (fun (a, wda, ws) -> match load_arg wda with
+           VBit b when ws = 1 -> a.(0) <- b
+         | VBitArray a' when Array.length a' = ws ->
+           Array.blit a' 0 a 0 ws
+         | _ -> failwith "type mismatch: tried to write RAM with wrong size") !wram;
+    List.iter (fun (x, y) -> Hashtbl.replace reg x (Hashtbl.find reg y)) wreg;
+    wram := [];
     Unix.sleepf 0.5
   done
 
