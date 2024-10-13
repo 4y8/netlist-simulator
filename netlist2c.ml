@@ -2,6 +2,24 @@ open Netlist_ast
 open Printf
 
 let read_rom = ref ""
+let static_rom = ref false
+
+let read_rom_file x ads ws =
+  let fd = open_in ("rom/" ^ x) in
+  let s = input_line fd in
+  let n = String.length s in
+  assert ((1 lsl ads) * ws < n || n mod ws <> 0);
+  let out = ref "{" in
+  for i = 0 to n / ws - 1 do
+    out := !out ^ "0b";
+    for j = 0 to ws - 1 do
+      assert (s.[i * ws + j] = '0' || s.[i * ws + j] = '1');
+      out := !out ^ sprintf "%c" s.[i * ws + j]
+    done;
+    out := !out ^ ",";
+  done;
+  out := !out ^ "}";
+  close_in fd; !out
 
 let build_mem fd p =
   let treat (x, e) = fprintf fd "uint64_t %s=0;" x; match e with
@@ -9,10 +27,12 @@ let build_mem fd p =
       fprintf fd "uint64_t ram_%s[%d]={0};uint64_t wad_%s=0;uint64_t wda_%s=0;"
         x (1 lsl ads) x x
     | Erom (ads, ws, _) ->
-      fprintf fd "uint64_t rom_%s[%d]={0};" x (1 lsl ads);
-      read_rom :=
-        !read_rom ^ sprintf
-          "f_ = fopen(\"rom/%s\",\"r\"); 
+      fprintf fd "uint64_t rom_%s[%d]=%s;" x (1 lsl ads)
+        (if !static_rom then read_rom_file x ads ws else "{0}");
+      if not !static_rom then
+        read_rom :=
+          !read_rom ^ sprintf
+            "f_ = fopen(\"rom/%s\",\"r\");
 for (int j_=0;(c_=getc(f_))!=EOF;++j_)
 rom_%s[j_/%d]|=(c_=='1')<<(%d-(j_ %% %d)-1);fclose(f_);" x x ws ws ws
     | Ereg _ -> fprintf fd "uint64_t tmp_%s_=0;" x
@@ -29,7 +49,7 @@ let compile f =
   build_mem fd p.p_eqs;
   List.iter (fprintf fd "uint64_t %s;") p.p_inputs;
   fprintf fd
-    "int main(){char buf_[65];FILE *f_;int c_; %s 
+    "int main(){char buf_[65];FILE *f_;int c_; %s
 for (int i_=0;1;++i_){printf(\"cycle : %%d\\n\", i_);" !read_rom;
   let var_size x = match Env.find x p.p_vars with
       TBit -> 1
@@ -99,4 +119,4 @@ puts(\"\");" (var_size x - 1) x
   output_string fd !end_loop_reg;
   fprintf fd "}}"
   
-let _ = Arg.parse [] compile ""
+let _ = Arg.parse [("-s", Set static_rom, "Set static mode")] compile ""
