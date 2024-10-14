@@ -8,7 +8,7 @@ let read_rom_file x ads ws =
   let fd = open_in ("rom/" ^ x) in
   let s = input_line fd in
   let n = String.length s in
-  assert ((1 lsl ads) * ws < n || n mod ws <> 0);
+  assert ((1 lsl ads) * ws >= n && n mod ws = 0);
   let out = ref "{" in
   for i = 0 to n / ws - 1 do
     out := !out ^ "0b";
@@ -49,8 +49,10 @@ let compile f =
   build_mem fd p.p_eqs;
   List.iter (fprintf fd "uint64_t %s;") p.p_inputs;
   fprintf fd
-    "int main(){char buf_[65];FILE *f_;int c_; %s
-for (int i_=0;1;++i_){printf(\"cycle : %%d\\n\", i_);" !read_rom;
+    "int main(int argc, char **argv){char buf_[65];FILE *f_;int c_;int inf_=1;
+unsigned long long int n_;
+%s;if(argc==2){n_=strtoull(argv[1],NULL,10);inf_=0;}
+for(int i_=0;inf_||i_<n_;++i_){printf(\"cycle : %%d\\n\", i_);" !read_rom;
   let var_size x = match Env.find x p.p_vars with
       TBit -> 1
     | TBitArray n -> n
@@ -97,7 +99,7 @@ if(strlen(buf_) != %d){fprintf(stderr, \"size mismatch\");exit(1);}
       assert (ws = var_size x);
       end_loop_ram :=
         !end_loop_ram ^ (sprintf "if(wda_%s)ram_%s[wad_%s&((1<<%d)-1)]=%s;"
-                              x x x ads (print wda)); 
+                              x x x ads (print wda));
       fprintf fd "%s=ram_%s[%s]&((1<<%d)-1);" x x (mask a) ws;
       fprintf fd "wda_%s=%s;wad_%s=%s;" x (print wen) x (print wad)
     | Econcat (a, a') ->
@@ -110,13 +112,13 @@ if(strlen(buf_) != %d){fprintf(stderr, \"size mismatch\");exit(1);}
   in
   List.iter emit_equ p.p_eqs;
   let out x =
-    fprintf fd "printf(\"%s: );" x;
-    fprintf fd "for(int k_=%d;k_>=0;--k)printf(\"%%ld\", (%s>>_k)&1); 
+    fprintf fd "printf(\"%s: \");" x;
+    fprintf fd "for(int k_=%d;k_>=0;--k_)printf(\"%%ld\", (%s>>k_)&1); 
 puts(\"\");" (var_size x - 1) x
   in
   List.iter out p.p_outputs;
   output_string fd !end_loop_ram;
   output_string fd !end_loop_reg;
   fprintf fd "}}"
-  
+
 let _ = Arg.parse [("-s", Set static_rom, "Set static mode")] compile ""
