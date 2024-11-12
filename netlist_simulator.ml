@@ -1,212 +1,126 @@
 open Netlist_ast
+open Printf
 
-let number_steps = ref max_int
-let print_only = ref false
-let rom_dir = ref "rom"
+let read_rom = ref ""
+let static_rom = ref false
 
-(** [l_op op v1 v2] computes the result of [op] on [v1] and [v2]. *)
-let l_op op = function
-    VBit b, VBit b' -> VBit (op b b')
-  | VBitArray a, VBitArray a' ->
-    begin
-      try 
-        VBitArray (Array.map2 op a a')
-      with
-        Invalid_argument _ -> failwith "size mismatch: mixed bus sizes with \
-                                      logical operations"
-    end
-  | _, _ -> failwith "type mismatch: mixed bus and bits with logical operations"
+let read_rom_file x ads ws =
+  let fd = open_in ("rom/" ^ x) in
+  let s = input_line fd in
+  let n = String.length s in
+  assert ((1 lsl ads) * ws >= n && n mod ws = 0);
+  let out = ref "{" in
+  for i = 0 to n / ws - 1 do
+    out := !out ^ "0b";
+    for j = 0 to ws - 1 do
+      assert (s.[i * ws + j] = '0' || s.[i * ws + j] = '1');
+      out := !out ^ sprintf "%c" s.[i * ws + j]
+    done;
+    out := !out ^ ",";
+  done;
+  out := !out ^ "}";
+  close_in fd; !out
 
-let fun_of_op = function
-    Or -> (||)
-  | And -> (&&)
-  | Xor -> (<>)
-  | Nand -> fun b1 b2 -> not (b1 && b2)
-
-(** [int_of_array n a] converts the array [a] of [n] bits to an integer in
-    big-endian. *)
-let int_of_array n a =
-  Array.mapi (fun i b -> (1 lsl (n - 1 - i)) * (if b then 1 else 0)) a |>
-  Array.fold_left (+) 0
-
-let bool_of_char = function
-    '0' -> false
-  | '1' -> true
-  | c ->
-    failwith @@ Printf.sprintf "wrong format: expected 0 or 1, got %c" c
-
-(** [build_mem p] builds and initializes maps for RAM and ROM of the equations
-    [p]. *)
-let build_mem reg =
-  let add_var (ram, rom, l) (x, e) = match e with
-      Eram (ads, ws, _, _, _, _) ->
-      Env.add x (Array.init (1 lsl ads)
-                   (fun _ -> Array.make ws false))
-        ram, rom, l
+let build_mem fd p =
+  let treat (x, e) = fprintf fd "uint64_t nl_%s=0;" x; match e with
+      Eram (ads, ws, _, _, _ ,_) ->
+      fprintf fd "uint64_t ram_%s[%d]={0};uint64_t wad_%s=0;uint64_t wda_%s=0;"
+        x (1 lsl ads) x x
     | Erom (ads, ws, _) ->
-      let fd = open_in (!rom_dir ^ "/" ^ x) in
-      let s = input_line fd in
-      let a = Array.init (1 lsl ads) (fun _ -> Array.make ws false) in
-      if (1 lsl ads) * ws < String.length s then
-        failwith "wrong format: rom file for %s is too big";
-      for i = 0 to String.length s - 1 do
-        a.(i / ws).(i mod ws) <- bool_of_char s.[i]
-      done;
-      close_in fd; ram, Env.add x a rom, l
-    | Ereg y -> ram, rom, (x, y) :: l
-    | _ -> ram, rom, l
-  in List.fold_left add_var (Env.empty, Env.empty, [])
+      fprintf fd "uint64_t rom_%s[%d]=%s;" x (1 lsl ads)
+        (if !static_rom then read_rom_file x ads ws else "{0}");
+      if not !static_rom then
+        read_rom :=
+          !read_rom ^ sprintf
+            "f_ = fopen(\"rom/%s\",\"r\");
+for (int j_=0;(c_=getc(f_))!=EOF;++j_)
+rom_%s[j_/%d]|=(c_=='1')<<(%d-(j_ %% %d)-1);fclose(f_);" x x ws ws ws
+    | Ereg _ -> fprintf fd "uint64_t tmp_%s_=0;" x
+    | _ -> ()
+  in
+  List.iter treat p
 
-(** [read_input x ty] reads the value of the input [x] of type [ty]. *)
-let read_input x ty =
-  let print_type = function
-    TBit -> ""
-  | TBitArray n -> Printf.sprintf " : %d" n
+let compile f =
+  let p = Netlist.read_file f in
+  let p = Scheduler.schedule p in
+  let fd = open_out "out.c" in
+  fprintf fd "#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>
+#include <unistd.h>\n#include <string.h>\n";
+  build_mem fd p.p_eqs;
+  List.iter (fprintf fd "uint64_t nl_%s;") p.p_inputs;
+  fprintf fd
+    "int main(int argc, char **argv){char buf_[65];FILE *f_;int c_;int inf_=1;
+unsigned long long int n_;
+%s;if(argc==2){n_=strtoull(argv[1],NULL,10);inf_=0;}
+for(int i_=0;inf_||i_<n_;++i_){printf(\"cycle : %%d\\n\", i_);" !read_rom;
+  let var_size x = match Env.find x p.p_vars with
+      TBit -> 1
+    | TBitArray n -> n
   in
-  Printf.printf "%s%s ? " x (print_type ty);
-  let s = read_line () in
-  match ty with
-    TBit ->
-    if String.length s <> 1 then
-      failwith @@
-      Printf.sprintf "size mismatch: expected a bit (size 1), got %s" s
-    else
-      VBit (bool_of_char s.[0])
-  | TBitArray n ->
-    if String.length s <> n then
-      failwith @@
-      Printf.sprintf "size mismatch: expected a bus of size %d, got %s" n s
-    else
-      VBitArray (Array.init n (fun i -> bool_of_char s.[i]))
-
-let simulator program number_steps =
-  let reg = Hashtbl.create 4096 in
-  let ram, rom, wreg = build_mem reg program.p_eqs in
-  let dum v = match Env.find v program.p_vars with
-      TBit -> VBit false
-    | TBitArray n -> VBitArray (Array.make n false)
+  let size = function
+      Avar x -> var_size x
+    | Aconst (VBit _) -> 1
+    | Aconst (VBitArray a) -> Array.length a
   in
-  List.iter (fun v -> Hashtbl.add reg v (dum v)) program.p_inputs;
-  List.iter (fun v -> Hashtbl.add reg v (dum v)) program.p_outputs;
-  List.iter (fun (v, _) -> Hashtbl.add reg v (dum v)) program.p_eqs;
-  let wram = ref [] in
-
-  let load_arg = function
-      Avar i -> Hashtbl.find reg i
-    | Aconst v -> v
+  let read_input x =
+    let n = var_size x in
+    fprintf fd "printf(\"%s:%d? \");fgets(buf_,65,stdin);
+if(strlen(buf_) != %d){fprintf(stderr, \"size mismatch\");exit(1);}
+nl_%s=strtoul(buf_,NULL,2);" x n n x
   in
-  let load_arrno a = match load_arg a with
-      VBit _ -> failwith "size mismatch: expected a bus, got a bit"
-    | VBitArray a -> a
+  List.iter read_input p.p_inputs;
+  let print = let string_of_bool b = if b then "1" else "0" in function
+      Avar s -> "nl_" ^  s
+    | Aconst (VBit b) -> string_of_bool b
+    | Aconst (VBitArray a) ->
+      "0b" ^ (Array.fold_right (^) (Array.map string_of_bool a) "")
   in
-  let load_adr n a = match load_arg a with
-      VBit b -> if b then 1 else 0
-    | VBitArray a -> int_of_array n a
+  let end_loop_ram = ref "" in
+  let end_loop_reg = ref "" in
+  let mask a =
+    sprintf "(%s&((1<<%d)-1))" (print a) (size a)
   in
-
-  let calc (x, e) = match e with
-      Earg a ->
-      load_arg a
+  let emit_equ (x, e) = match e with
+      Earg a -> fprintf fd "nl_%s=%s;" x (print a)
     | Ereg y ->
-      Hashtbl.find reg x
-    | Enot a -> begin
-        match load_arg a with
-          VBit b -> VBit (not b)
-        | VBitArray a ->
-          VBitArray (Array.map (not) a)
-      end
-    | Ebinop (o, a, a') ->
-      let v = load_arg a in
-      let v' = load_arg a' in
-      l_op (fun_of_op o) (v, v')
+      end_loop_ram := sprintf "tmp_%s_=nl_%s;%s" x y !end_loop_ram;
+      end_loop_reg := sprintf "nl_%s=tmp_%s_;%s" x x !end_loop_reg
+    | Enot a -> fprintf fd "nl_%s=~%s;" x (print a)
+    | Ebinop (Or, a, a') -> fprintf fd "nl_%s=%s|%s;" x (print a) (print a')
+    | Ebinop (And, a, a') -> fprintf fd "nl_%s=%s&%s;" x (print a) (print a')
+    | Ebinop (Xor, a, a') -> fprintf fd "nl_%s=%s^%s;" x (print a) (print a')
+    | Ebinop (Nand, a, a') ->
+      fprintf fd "nl_%s=~(%s&%s);" x (print a) (print a')
     | Emux (c, f, t) ->
-      let v = load_arg c in
-      if v = VBit true then
-        load_arg t
-      else if v = VBit false then
-        load_arg f
-      else
-        failwith "type mismatch: used a multiplexer on a bus, expected a bit"
-    | Erom (ss, ws, ad) ->
-      let ad = load_adr ss ad in
-      VBitArray (Env.find x rom).(ad)
-    | Eram (ss, ws, rad, wen, wad, wda) ->
-      let lram = Env.find x ram in
-      let ad = load_adr ss rad in
-      let v =
-        if ws = 1
-        then VBit lram.(ad).(0)
-        else VBitArray (Array.copy lram.(ad))
-      in
-      Hashtbl.replace reg x v;
-      (if load_arg wen = VBit true then
-         let ad = load_adr ss wad in
-         wram := (lram.(ad), wda, ws) :: !wram
-      );
-      v
+      fprintf fd "nl_%s=(%s)?(%s):(%s);" x (print c) (print t) (print f)
+    | Erom (ads, ws, a) ->
+      assert (ws = var_size x);
+      fprintf fd "nl_%s=rom_%s[%s&((1<<%d)-1)];" x x (mask a) ws
+    | Eram (ads, ws, a, wen, wad, wda) ->
+      assert (ws = var_size x);
+      end_loop_ram := sprintf "%sif(wda_%s)ram_%s[wad_%s&((1<<%d)-1)]=%s;"
+          !end_loop_ram x x x ads (print wda);
+      fprintf fd "nl_%s=ram_%s[%s]&((1<<%d)-1);" x x (mask a) ws;
+      fprintf fd "wda_%s=%s;wad_%s=%s;" x (print wen) x (print wad)
     | Econcat (a, a') ->
-      let a = load_arrno a in
-      let a' = load_arrno a' in
-      VBitArray (Array.concat [a; a'])
-    | Eslice (i, j, a) ->
-      let a = load_arrno a in
-      VBitArray (Array.sub a i (j - i + 1))
+      fprintf fd "nl_%s=(%s<<%d)|(%s);" x (print a) (size a') (mask a')
     | Eselect (i, a) ->
-      match load_arg a with
-        VBitArray a -> VBit a.(i)
-      | _ -> failwith "type mismatch: called select on a bit instead of a bus"
+      fprintf fd "nl_%s=((%s)>>%d)&1;" x (print a) (size a - i - 1)
+    | Eslice (i, j, a) ->
+      fprintf fd "nl_%s=((%s)>>%d)&((1<<%d)-1);" x (print a) (size a - j - 1)
+        (j - i + 1)
   in
-
-  let exec (x, e) =
-    Hashtbl.replace reg x (calc (x, e));
+  List.iter emit_equ p.p_eqs;
+  let out x =
+    fprintf fd "printf(\"%s: \");" x;
+    fprintf fd "for(int k_=%d;k_>=0;--k_)printf(\"%%ld\", (nl_%s>>k_)&1); 
+puts(\"\");" (var_size x - 1) x
   in
+  List.iter out p.p_outputs;
+  output_string fd !end_loop_ram;
+  output_string fd !end_loop_reg;
+  fprintf fd "}}"
 
-  for i = 1 to number_steps do
-    Printf.printf "cycle : %d\n" i;
-    let read_input x =
-      Hashtbl.replace reg x @@ read_input x (Env.find x program.p_vars)
-    in
-    let out x =
-      Printf.printf "%s : " x;
-      match Hashtbl.find reg x with
-        VBit b ->
-        if b then print_endline "1" else print_endline "0"
-      | VBitArray a ->
-        Array.iter (fun b -> if b then print_int 1 else print_int 0) a;
-        print_newline ()
-    in
-    List.iter read_input program.p_inputs;
-    List.iter exec program.p_eqs;
-    List.iter out program.p_outputs;
-    List.iter (fun (a, wda, ws) -> match load_arg wda with
-           VBit b when ws = 1 -> a.(0) <- b
-         | VBitArray a' when Array.length a' = ws ->
-           Array.blit a' 0 a 0 ws
-         | _ -> failwith "type mismatch: tried to write RAM with wrong size") !wram;
-    List.iter (fun (x, y) -> Hashtbl.replace reg x (Hashtbl.find reg y)) wreg;
-    wram := [];
-    Unix.sleepf 0.5
-  done
-
-let compile filename =
-  try
-    let p = Netlist.read_file filename in
-    begin try
-        let p = Scheduler.schedule p in
-        simulator p !number_steps
-      with
-        | Scheduler.Combinational_cycle ->
-            Format.eprintf "The netlist has a combinatory cycle.@.";
-    end;
-  with
-    | Netlist.Parse_error s -> Format.eprintf "An error accurred: %s@." s; exit 2
-
-let main () =
-  Arg.parse
-    [ "-n", Arg.Set_int number_steps, "Number of steps to simulate"
-    ; "-r", Arg.Set_string rom_dir, "Name of the rom directory"]
-    compile
-    ""
-;;
-
-main ()
+let _ =
+  Arg.parse [("-s", Set static_rom, "Set static mode")]
+    compile "netlist_simulator [-s] <file>"
