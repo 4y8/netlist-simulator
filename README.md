@@ -1,6 +1,8 @@
 # Netlist Simulator
 ## Presentation
-A small transpiler from netlist to C.
+A small transpiler from netlist to
+C. [Here](https://github.com/4y8/netlist-simulator) is a link to the github
+repository.
 
 To build run :
 ```
@@ -12,7 +14,7 @@ It will create an executable `netlist_simulator` which can be run with
 be run with `./a.out [n]` where n is the optional number of steps. By default
 the C program expects a `rom` directory where each `x=ROM(...)` has a
 corresponding file consiting in a sequence of zeros and ones. This behaviour can
-be changed by the `-s` option of netlist_simulator which toggles static
+be changed by the `-s` option of netlist\_simulator which toggles static
 mode. The rom files are now expected by the netlist\_simulator program directly
 (in the same format) and are put in the C file. This has been implemented hoping
 that an optimizing C compiler could use the ROMs to further optimize the
@@ -25,10 +27,14 @@ and prints the value of the outputs. To be precise, initially registers and RAM
 are set to 0, then at each step, the following happen:
 * the inputs are read,
 * then the netlist is executed, omitting registers and RAM writes (the values to
-be written in registers are just stored),
+be written in registers and RAM are just stored),
 * the RAM is updated,
 * the registers are updated,
-* the outputs are printed.
+* the outputs are printed. 
+
+Everithing is stored on unsigned 64-bits integers as it is the standard size on
+modern computers, bus of size 65 or plus are thus not supported. It should not
+be a problem as the CPU which will be designed shouldn't use too wide buses.
 
 ## Difficulties encountered
 The main difficulty was to understand well the memory model which is different
