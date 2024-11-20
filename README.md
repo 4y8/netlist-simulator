@@ -13,7 +13,7 @@ It will create an executable `netlist_simulator` which can be run with
 `./netlist_simulator [-s] <file>` to output a file `out.c`. Once compiled it can
 be run with `./a.out [n]` where n is the optional number of steps. By default
 the C program expects a `rom` directory where each `x=ROM(...)` has a
-corresponding file consiting in a sequence of zeros and ones. This behaviour can
+corresponding file called `x` consiting in a sequence of zeros and ones (the ASCII characters). This behaviour can
 be changed by the `-s` option of netlist\_simulator which toggles static
 mode. The rom files are now expected by the netlist\_simulator program directly
 (in the same format) and are put in the C file. This has been implemented hoping
