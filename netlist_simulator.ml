@@ -103,11 +103,11 @@ nl_%s=strtoul(buf_,NULL,2);" x n n x
       fprintf fd "nl_%s=ram_%s[%s]&((1ull<<%d)-1);" x x (mask a) ws;
       fprintf fd "wda_%s=%s;wad_%s=%s;" x (print wen) x (print wad)
     | Econcat (a, a') ->
-      fprintf fd "nl_%s=(%s<<%d)|(%s);" x (print a) (size a') (mask a')
+      fprintf fd "nl_%s=(%s<<%d)|(%s);" x (print a') (size a) (mask a)
     | Eselect (i, a) ->
-      fprintf fd "nl_%s=((%s)>>%d)&1;" x (print a) (size a - i - 1)
+      fprintf fd "nl_%s=((%s)>>%d)&1;" x (print a) i
     | Eslice (i, j, a) ->
-      fprintf fd "nl_%s=((%s)>>%d)&((1ull<<%d)-1);" x (print a) (size a - j - 1)
+      fprintf fd "nl_%s=((%s)>>%d)&((1ull<<%d)-1);" x (print a) i
         (j - i + 1)
   in
   List.iter emit_equ p.p_eqs;
