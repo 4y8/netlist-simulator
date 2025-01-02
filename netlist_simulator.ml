@@ -92,7 +92,7 @@ nl_%s=strtoul(buf_,NULL,2);" x n n x
     | Ebinop (Nand, a, a') ->
       fprintf fd "nl_%s=~(%s&%s);" x (print a) (print a')
     | Emux (c, f, t) ->
-      fprintf fd "nl_%s=(%s)?(%s):(%s);" x (print c) (print t) (print f)
+      fprintf fd "nl_%s=((%s)&1ull)?(%s):(%s);" x (print c) (print t) (print f)
     | Erom (ads, ws, a) ->
       assert (ws = var_size x);
       fprintf fd "nl_%s=rom_%s[%s&((1ull<<%d)-1)];" x x (mask a) ws
@@ -116,9 +116,9 @@ nl_%s=strtoul(buf_,NULL,2);" x n n x
     fprintf fd "for(int k_=%d;k_>=0;--k_)printf(\"%%llu\", (nl_%s>>k_)&1);
 puts(\"\");" (var_size x - 1) x
   in
-  List.iter out p.p_outputs;
   output_string fd !end_loop_ram;
   output_string fd !end_loop_reg;
+  List.iter out p.p_outputs;
   fprintf fd "}}"
 
 let _ =
