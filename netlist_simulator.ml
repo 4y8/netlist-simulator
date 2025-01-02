@@ -16,7 +16,7 @@ let read_rom_file x ads ws =
       assert (s.[i * ws + j] = '0' || s.[i * ws + j] = '1');
       out := !out ^ sprintf "%c" s.[i * ws + j]
     done;
-    out := !out ^ ",";
+    out := !out ^ "ull,";
   done;
   out := !out ^ "}";
   close_in fd; !out
@@ -24,7 +24,7 @@ let read_rom_file x ads ws =
 let build_mem fd p =
   let treat (x, e) = fprintf fd "uint64_t nl_%s=0;" x; match e with
       Eram (ads, ws, _, _, _ ,_) ->
-      fprintf fd "uint64_t ram_%s[%d]={0};uint64_t wad_%s=0;uint64_t wda_%s=0;"
+      fprintf fd "uint64_t ram_%s[%d]={0ull};uint64_t wad_%s=0;uint64_t wda_%s=0ull;"
         x (1 lsl ads) x x
     | Erom (ads, ws, _) ->
       fprintf fd "uint64_t rom_%s[%d]=%s;" x (1 lsl ads)
@@ -78,7 +78,7 @@ nl_%s=strtoul(buf_,NULL,2);" x n n x
   let end_loop_ram = ref "" in
   let end_loop_reg = ref "" in
   let mask a =
-    sprintf "(%s&((1<<%d)-1))" (print a) (size a)
+    sprintf "(%s&((1ull<<%d)-1))" (print a) (size a)
   in
   let emit_equ (x, e) = match e with
       Earg a -> fprintf fd "nl_%s=%s;" x (print a)
@@ -95,25 +95,25 @@ nl_%s=strtoul(buf_,NULL,2);" x n n x
       fprintf fd "nl_%s=(%s)?(%s):(%s);" x (print c) (print t) (print f)
     | Erom (ads, ws, a) ->
       assert (ws = var_size x);
-      fprintf fd "nl_%s=rom_%s[%s&((1<<%d)-1)];" x x (mask a) ws
+      fprintf fd "nl_%s=rom_%s[%s&((1ull<<%d)-1)];" x x (mask a) ws
     | Eram (ads, ws, a, wen, wad, wda) ->
       assert (ws = var_size x);
-      end_loop_ram := sprintf "%sif(wda_%s)ram_%s[wad_%s&((1<<%d)-1)]=%s;"
+      end_loop_ram := sprintf "%sif(wda_%s)ram_%s[wad_%s&((1ull<<%d)-1)]=%s;"
           !end_loop_ram x x x ads (print wda);
-      fprintf fd "nl_%s=ram_%s[%s]&((1<<%d)-1);" x x (mask a) ws;
+      fprintf fd "nl_%s=ram_%s[%s]&((1ull<<%d)-1);" x x (mask a) ws;
       fprintf fd "wda_%s=%s;wad_%s=%s;" x (print wen) x (print wad)
     | Econcat (a, a') ->
       fprintf fd "nl_%s=(%s<<%d)|(%s);" x (print a) (size a') (mask a')
     | Eselect (i, a) ->
       fprintf fd "nl_%s=((%s)>>%d)&1;" x (print a) (size a - i - 1)
     | Eslice (i, j, a) ->
-      fprintf fd "nl_%s=((%s)>>%d)&((1<<%d)-1);" x (print a) (size a - j - 1)
+      fprintf fd "nl_%s=((%s)>>%d)&((1ull<<%d)-1);" x (print a) (size a - j - 1)
         (j - i + 1)
   in
   List.iter emit_equ p.p_eqs;
   let out x =
     fprintf fd "printf(\"%s: \");" x;
-    fprintf fd "for(int k_=%d;k_>=0;--k_)printf(\"%%ld\", (nl_%s>>k_)&1); 
+    fprintf fd "for(int k_=%d;k_>=0;--k_)printf(\"%%llu\", (nl_%s>>k_)&1);
 puts(\"\");" (var_size x - 1) x
   in
   List.iter out p.p_outputs;
