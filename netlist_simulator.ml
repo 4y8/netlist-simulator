@@ -45,7 +45,7 @@ let compile f =
   let p = Scheduler.schedule p in
   let fd = open_out "out.c" in
   fprintf fd "#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>
-#include <unistd.h>\n#include <string.h>\n";
+#include <unistd.h>\n#include <string.h>\n#include <inttypes.h>\n";
   build_mem fd p.p_eqs;
   List.iter (fprintf fd "uint64_t nl_%s;") p.p_inputs;
   fprintf fd
@@ -98,8 +98,8 @@ nl_%s=strtoul(buf_,NULL,2);" x n n x
       fprintf fd "nl_%s=rom_%s[%s&((1ull<<%d)-1)];" x x (mask a) ws
     | Eram (ads, ws, a, wen, wad, wda) ->
       assert (ws = var_size x);
-      end_loop_ram := sprintf "%sif(wda_%s)ram_%s[wad_%s&((1ull<<%d)-1)]=%s;"
-          !end_loop_ram x x x ads (print wda);
+      end_loop_ram := sprintf "%s if(wda_%s){ram_%s[wad_%s&((1ull<<%d)-1)]=%s;printf(\"%%lu\\n\", %s);printf(\"%%llu\\n\", wad_%s&((1ull<<%d)-1));puts(\"ee\");}"
+          !end_loop_ram x x x ads (print wda) (print wda) x ads;
       fprintf fd "nl_%s=ram_%s[%s]&((1ull<<%d)-1);" x x (mask a) ws;
       fprintf fd "wda_%s=%s;wad_%s=%s;" x (print wen) x (print wad)
     | Econcat (a, a') ->
@@ -113,7 +113,7 @@ nl_%s=strtoul(buf_,NULL,2);" x n n x
   List.iter emit_equ p.p_eqs;
   let out x =
     fprintf fd "printf(\"%s: \");" x;
-    fprintf fd "for(int k_=%d;k_>=0;--k_)printf(\"%%llu\", (nl_%s>>k_)&1);
+    fprintf fd "for(int k_=%d;k_>=0;--k_)printf(\"%%\" PRIu64 \"\", (nl_%s>>k_)&1);
 puts(\"\");" (var_size x - 1) x
   in
   output_string fd !end_loop_ram;

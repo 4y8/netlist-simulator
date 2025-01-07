@@ -15,8 +15,8 @@ let nec_var = function
   | Emux (a, a', a'') ->
     free_var_arg a @ free_var_arg a' @ free_var_arg a''
   | Erom (_, _, a) -> free_var_arg a
-  | Eram (_, _, a, _, _, _) ->
-    free_var_arg a
+  | Eram (_, _, a, wen, wad, _) ->
+    free_var_arg a @ free_var_arg wen @ free_var_arg wad
   | Econcat (a, a') -> free_var_arg a @ free_var_arg a'
   | Eslice (_, _, a) -> free_var_arg a
   | Eselect (_, a) -> free_var_arg a
