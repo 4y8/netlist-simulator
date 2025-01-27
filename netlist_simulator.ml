@@ -77,15 +77,18 @@ nl_%s=strtoul(buf_,NULL,2);" x n n x
   in
   let end_loop_ram = ref "" in
   let end_loop_reg = ref "" in
+  let mask_of_one n =
+    "0b" ^ (String.make n '1') ^ "ull"
+  in
   let mask a =
-    sprintf "(%s&((1ull<<%d)-1))" (print a) (size a)
+    sprintf "(%s&%s)" (print a) (mask_of_one @@ size a)
   in
   let emit_equ (x, e) = match e with
-      Earg a -> fprintf fd "nl_%s=%s;" x (print a)
+    | Earg a -> fprintf fd "nl_%s=%s;" x (print a)
     | Ereg y ->
       end_loop_ram := sprintf "tmp_%s_=nl_%s;%s" x y !end_loop_ram;
       end_loop_reg := sprintf "nl_%s=tmp_%s_;%s" x x !end_loop_reg
-    | Enot a -> fprintf fd "nl_%s=~%s;" x (print a)
+    | Enot a -> fprintf fd "nl_%s=(~%s)&%s;" x (print a) (mask_of_one @@ size a)
     | Ebinop (Or, a, a') -> fprintf fd "nl_%s=%s|%s;" x (print a) (print a')
     | Ebinop (And, a, a') -> fprintf fd "nl_%s=%s&%s;" x (print a) (print a')
     | Ebinop (Xor, a, a') -> fprintf fd "nl_%s=%s^%s;" x (print a) (print a')
@@ -95,20 +98,20 @@ nl_%s=strtoul(buf_,NULL,2);" x n n x
       fprintf fd "nl_%s=((%s)&1ull)?(%s):(%s);" x (print c) (print t) (print f)
     | Erom (ads, ws, a) ->
       assert (ws = var_size x);
-      fprintf fd "nl_%s=rom_%s[%s&((1ull<<%d)-1)];" x x (mask a) ws
+      fprintf fd "nl_%s=rom_%s[%s&%s];" x x (mask a) (mask_of_one ws)
     | Eram (ads, ws, a, wen, wad, wda) ->
       assert (ws = var_size x);
-      end_loop_ram := sprintf "%s if(wda_%s){ram_%s[wad_%s&((1ull<<%d)-1)]=%s;printf(\"%%lu\\n\", %s);printf(\"%%llu\\n\", wad_%s&((1ull<<%d)-1));puts(\"ee\");}"
-          !end_loop_ram x x x ads (print wda) (print wda) x ads;
-      fprintf fd "nl_%s=ram_%s[%s]&((1ull<<%d)-1);" x x (mask a) ws;
+      end_loop_ram := sprintf "%sif(wda_%s&1)ram_%s[wad_%s&%s]=%s;"
+          !end_loop_ram x x x (mask_of_one ads) (print wda);
+      fprintf fd "nl_%s=ram_%s[%s]&%s;" x x (mask a) (mask_of_one ws);
       fprintf fd "wda_%s=%s;wad_%s=%s;" x (print wen) x (print wad)
     | Econcat (a, a') ->
       fprintf fd "nl_%s=(%s<<%d)|(%s);" x (print a') (size a) (mask a)
     | Eselect (i, a) ->
       fprintf fd "nl_%s=((%s)>>%d)&1;" x (print a) i
     | Eslice (i, j, a) ->
-      fprintf fd "nl_%s=((%s)>>%d)&((1ull<<%d)-1);" x (print a) i
-        (j - i + 1)
+      fprintf fd "nl_%s=((%s)>>%d)&%s;" x (print a) i
+        (mask_of_one @@ j - i + 1)
   in
   List.iter emit_equ p.p_eqs;
   let out x =
