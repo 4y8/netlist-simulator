@@ -134,13 +134,20 @@ puts(\"\");" (var_size x - 1) x
   in
   output_string fd !end_loop_ram;
   output_string fd !end_loop_reg;
-  List.iter out p.p_outputs;
-  if !clock_mode then 
+  if not !clock_mode then
+    List.iter out p.p_outputs;
+  if !clock_mode then begin
     fprintf fd "rom_tick[0]=%s%%2;" (if !fast_mode then "i_" else "time(NULL)");
+    if !fast_mode then
+      output_string fd "if (i_ % 16384 == 0)
+printf(\"%02d:%02d:%02d:%02d:%02d:%02d\n\",ram_date[0],ram_date[1],ram_date[2],
+ram_date[3],ram_date[4],ram_date[5]);"
+  end;
   fprintf fd "}}"
 
 let _ =
   Arg.parse [("-s", Set static_rom, "Set static mode");
              ("-c", Set clock_mode, "Enable options dedicated to the clock");
-             ("-f", Set fast_mode, "Set competition mode (seconds aren't real seconds)")]
+             ("-f", Set fast_mode,
+              "Set competition mode (seconds aren't real seconds)")]
     compile "netlist_simulator [-s] <file>"
