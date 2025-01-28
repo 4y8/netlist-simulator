@@ -50,22 +50,41 @@ let compile f =
   let fd = open_out "out.c" in
   fprintf fd "#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>
 #include <time.h>\n#include <unistd.h>\n#include <string.h>
-#include <inttypes.h>\n";
+#include <inttypes.h>\n#include <ncurses.h>\n#include <pthread.h>
+#include <unistd.h>
+";
   build_mem fd p.p_eqs;
+  fprintf fd "
+#define LEN_OF_MESSAGE 29
+char month_name[12][10] = {\"janvier\", \"février\", \"mars\", \"avril\", 
+\"mai\", \"juin\", \"juillet\", \"août\", \"septembre\", \"octobre\", 
+\"novembre\", \"décembre\"};
+void printer(char *s) {
+  mvprintw((LINES - 1)/2, (COLS - LEN_OF_MESSAGE)/2, s);
+  refresh();
+}
+void *thread_printer(void *arg) {
+  char *s = (char*) malloc((LEN_OF_MESSAGE+1)*sizeof(char));
+  while (1) {
+    sprintf(s, \"%%02d:%%02d:%%02d - %%d %%s %%d\", (int) ram_date[3], 
+(int) ram_date[4], (int) ram_date[5], (int) ram_date[2], month_name[(int) ram_date[1]-1], (int) ram_date[0]);printer(s);usleep(15);}pthread_exit(EXIT_SUCCESS);}";
   List.iter (fprintf fd "uint64_t nl_%s;") p.p_inputs;
   let clock_prelude =
     if !clock_mode then
       "time_t rtime = time(NULL);struct tm *ptm = localtime(&rtime);
 ram_date[0]=ptm->tm_year+1900;ram_date[1]=ptm->tm_mon+1;ram_date[2]=ptm->tm_mday;
 ram_date[3]=ptm->tm_hour;ram_date[4]=ptm->tm_min;ram_date[5]=ptm->tm_sec;"
+        ^ if !fast_mode then "" else "initscr();curs_set(0);pthread_t thread1;
+pthread_create(&thread1, NULL, thread_printer, NULL);"
     else ""
   in
   fprintf fd
     "int main(int argc, char **argv){char buf_[65];FILE *f_;int c_;int inf_=1;
 unsigned long long int n_;
 %s;if(argc==2){n_=strtoull(argv[1],NULL,10);inf_=0;}%s
-for(int i_=0;inf_||i_<n_;++i_){printf(\"cycle : %%d\\n\", i_);"
+for(int i_=0;inf_||i_<n_;++i_){"
     !read_rom clock_prelude;
+  if not !clock_mode then fprintf fd "printf(\"cycle : %%d\\n\", i_);";
   let var_size x = match Env.find x p.p_vars with
       TBit -> 1
     | TBitArray n -> n
@@ -139,11 +158,12 @@ puts(\"\");" (var_size x - 1) x
   if !clock_mode then begin
     fprintf fd "rom_tick[0]=%s%%2;" (if !fast_mode then "i_" else "time(NULL)");
     if !fast_mode then
-      output_string fd "if (i_ % 16384 == 0)
-printf(\"%02d:%02d:%02d:%02d:%02d:%02d\n\",ram_date[0],ram_date[1],ram_date[2],
-ram_date[3],ram_date[4],ram_date[5]);"
+      output_string fd "if (i_ % 524288 == 0)
+printf(\"%02d:%02d:%02d:%02d:%02d:%02d\\n\",(int)ram_date[0],(int)ram_date[1],(int)ram_date[2],
+(int)ram_date[3],(int)ram_date[4],(int)ram_date[5]);"
   end;
-  fprintf fd "}}"
+  if !clock_mode && not !fast_mode then fprintf fd "}getch();endwin();}"
+  else fprintf fd "}}"
 
 let _ =
   Arg.parse [("-s", Set static_rom, "Set static mode");
