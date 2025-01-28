@@ -2,24 +2,27 @@ open Netlist_ast
 open Printf
 
 let read_rom = ref ""
+let clock_mode = ref false
 let static_rom = ref false
 
 let read_rom_file x ads ws =
-  let fd = open_in ("rom/" ^ x) in
-  let s = input_line fd in
-  let n = String.length s in
-  assert ((1 lsl ads) * ws >= n && n mod ws = 0);
-  let out = ref "{" in
-  for i = 0 to n / ws - 1 do
-    out := !out ^ "0b";
-    for j = 0 to ws - 1 do
-      assert (s.[i * ws + j] = '0' || s.[i * ws + j] = '1');
-      out := !out ^ sprintf "%c" s.[i * ws + j]
+  if x <> "tick" then
+    let fd = open_in ("rom/" ^ x) in
+    let s = input_line fd in
+    let n = String.length s in
+    assert ((1 lsl ads) * ws >= n && n mod ws = 0);
+    let out = ref "{" in
+    for i = 0 to n / ws - 1 do
+      out := !out ^ "0b";
+      for j = 0 to ws - 1 do
+        assert (s.[i * ws + j] = '0' || s.[i * ws + j] = '1');
+        out := !out ^ sprintf "%c" s.[i * ws + j]
+      done;
+      out := !out ^ "ull,";
     done;
-    out := !out ^ "ull,";
-  done;
-  out := !out ^ "}";
-  close_in fd; !out
+    out := !out ^ "}";
+    close_in fd; !out
+  else "{0}"
 
 let build_mem fd p =
   let treat (x, e) = fprintf fd "uint64_t nl_%s=0;" x; match e with
@@ -29,7 +32,7 @@ let build_mem fd p =
     | Erom (ads, ws, _) ->
       fprintf fd "uint64_t rom_%s[%d]=%s;" x (1 lsl ads)
         (if !static_rom then read_rom_file x ads ws else "{0}");
-      if not !static_rom then
+      if not !static_rom && x <> "tick" then
         read_rom :=
           !read_rom ^ sprintf
             "f_ = fopen(\"rom/%s\",\"r\");
@@ -45,14 +48,23 @@ let compile f =
   let p = Scheduler.schedule p in
   let fd = open_out "out.c" in
   fprintf fd "#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>
-#include <unistd.h>\n#include <string.h>\n#include <inttypes.h>\n";
+#include <time.h>\n#include <unistd.h>\n#include <string.h>
+#include <inttypes.h>\n";
   build_mem fd p.p_eqs;
   List.iter (fprintf fd "uint64_t nl_%s;") p.p_inputs;
+  let clock_prelude =
+    if !clock_mode then
+      "time_t rtime = time(NULL);struct tm *ptm = localtime(&rtime);
+ram_date[0]=ptm->tm_year+1900;ram_date[1]=ptm->tm_mon+1;ram_date[2]->tm_mday;
+ram_date[3]=ptm->tm_hour;ram_date[4]=ptm->tm_min;ram_date[5]=ptm->tm_sec;"
+    else ""
+  in
   fprintf fd
     "int main(int argc, char **argv){char buf_[65];FILE *f_;int c_;int inf_=1;
 unsigned long long int n_;
-%s;if(argc==2){n_=strtoull(argv[1],NULL,10);inf_=0;}
-for(int i_=0;inf_||i_<n_;++i_){printf(\"cycle : %%d\\n\", i_);" !read_rom;
+%s;if(argc==2){n_=strtoull(argv[1],NULL,10);inf_=0;}%s
+for(int i_=0;inf_||i_<n_;++i_){printf(\"cycle : %%d\\n\", i_);"
+    !read_rom clock_prelude;
   let var_size x = match Env.find x p.p_vars with
       TBit -> 1
     | TBitArray n -> n
@@ -122,8 +134,11 @@ puts(\"\");" (var_size x - 1) x
   output_string fd !end_loop_ram;
   output_string fd !end_loop_reg;
   List.iter out p.p_outputs;
+  if !clock_mode then
+    output_string fd "rom_tick[0]=time(NULL)%2;";
   fprintf fd "}}"
 
 let _ =
-  Arg.parse [("-s", Set static_rom, "Set static mode")]
+  Arg.parse [("-s", Set static_rom, "Set static mode");
+             ("-c", Set clock_mode, "Enable options dedicated to the clock")]
     compile "netlist_simulator [-s] <file>"
