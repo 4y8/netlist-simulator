@@ -4,6 +4,7 @@ open Printf
 let read_rom = ref ""
 let clock_mode = ref false
 let static_rom = ref false
+let fast_mode = ref false
 
 let read_rom_file x ads ws =
   if x <> "tick" then
@@ -55,7 +56,7 @@ let compile f =
   let clock_prelude =
     if !clock_mode then
       "time_t rtime = time(NULL);struct tm *ptm = localtime(&rtime);
-ram_date[0]=ptm->tm_year+1900;ram_date[1]=ptm->tm_mon+1;ram_date[2]->tm_mday;
+ram_date[0]=ptm->tm_year+1900;ram_date[1]=ptm->tm_mon+1;ram_date[2]=ptm->tm_mday;
 ram_date[3]=ptm->tm_hour;ram_date[4]=ptm->tm_min;ram_date[5]=ptm->tm_sec;"
     else ""
   in
@@ -134,11 +135,12 @@ puts(\"\");" (var_size x - 1) x
   output_string fd !end_loop_ram;
   output_string fd !end_loop_reg;
   List.iter out p.p_outputs;
-  if !clock_mode then
-    output_string fd "rom_tick[0]=time(NULL)%2;";
+  if !clock_mode then 
+    fprintf fd "rom_tick[0]=%s%%2;" (if !fast_mode then "i_" else "time(NULL)");
   fprintf fd "}}"
 
 let _ =
   Arg.parse [("-s", Set static_rom, "Set static mode");
-             ("-c", Set clock_mode, "Enable options dedicated to the clock")]
+             ("-c", Set clock_mode, "Enable options dedicated to the clock");
+             ("-f", Set fast_mode, "Set competition mode (seconds aren't real seconds)")]
     compile "netlist_simulator [-s] <file>"
